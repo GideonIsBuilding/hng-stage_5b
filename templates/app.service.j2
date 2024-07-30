@@ -1,0 +1,14 @@
+[Unit]
+Description=Stage 5b Java Application
+After=network.target
+
+[Service]
+User=hng
+WorkingDirectory={{ app_dir }}
+ExecStart=/usr/bin/java -jar {{ jar_path }} --server.port=3000
+Restart=always
+StandardOutput=append:/var/log/stage_5b/out.log
+StandardError=append:/var/log/stage_5b/error.log
+
+[Install]
+WantedBy=multi-user.target

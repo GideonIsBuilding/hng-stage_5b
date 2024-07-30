@@ -1,0 +1,19 @@
+# Database Configuration
+spring.datasource.url=jdbc:postgresql://localhost:5432/{{ vault_pg_db }}
+spring.datasource.username={{ vault_pg_user }}
+spring.datasource.password={{ vault_pg_password }}
+
+# RabbitMQ Configuration
+spring.rabbitmq.host=localhost
+spring.rabbitmq.port=5672
+spring.rabbitmq.username={{ vault_rabbitmq_user }}
+spring.rabbitmq.password={{ vault_rabbitmq_password }}
+
+# Application Configuration
+server.port=3000
+spring.application.name=stage_5b
+
+# JWT Configuration
+sha512.string={{ vault_sha512_string }}
+
+# Add any other necessary configuration properties here
