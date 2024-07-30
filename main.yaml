@@ -1,0 +1,399 @@
+---
+- name: Deploy and Configure Java Boilerplate Application
+  hosts: hng
+  become: yes
+  vars_files:
+    - vault.yml
+  vars:
+    repo_url: "https://github.com/hngprojects/hng_boilerplate_java_web.git"
+    repo_branch: "devops"
+    app_dir: "/opt/stage_5b"
+    pg_version: 14
+    java_version: "17"
+    maven_version: "3.9.8"
+    nginx_version: "1.26.0" 
+
+  pre_tasks:
+    - name: Ensure Ansible temo directory exists
+      file:
+        path: "/tmp/.ansible-{{ ansible_user }}/tmp"
+        state: directory
+        mode: '0700'
+      become: yes
+
+  tasks:
+    # 1. System Preparation
+    - name: Create hng group
+      group:
+        name: hng
+        state: present
+
+    - name: Create hng user
+      user:
+        name: hng
+        groups: sudo
+        shell: /bin/bash
+        state: present
+
+    - name: Create application directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: hng
+        group: hng
+        mode: '0755'
+
+    - name: Create log directory
+      become: yes
+      file:
+        path: /var/log/stage_5b
+        state: directory
+        owner: hng
+        group: hng
+        mode: '0755'
+
+    - name: Create log files
+      become: yes
+      file:
+        path: "{{ item }}"
+        state: touch
+        owner: hng
+        group: hng
+        mode: '0644'
+      loop:
+        - /var/log/stage_5b/error.log
+        - /var/log/stage_5b/out.log
+
+    - name: Debug - Check if log files exist
+      stat:
+        path: "{{ item }}"
+      loop:
+        - /var/log/stage_5b/error.log
+        - /var/log/stage_5b/out.log
+      register: file_stats
+
+    - name: Ensure log file ownership
+      become: yes
+      file:
+        path: "{{ item.stat.path }}"
+        owner: hng
+        group: hng
+        mode: '0644'
+      loop: "{{ file_stats.results }}" 
+      when: item.stat.exists
+
+    - name: Create /var/secrets directory
+      file:
+        path: /var/secrets
+        state: directory
+        mode: '0750'
+        owner: root
+        group: root
+
+    # 2. Java and Maven Installation
+    - name: Install Java
+      apt:
+        name: 
+          - openjdk-{{ java_version }}-jdk
+        state: present
+        update_cache: yes
+
+    - name: Install specific Maven version
+      get_url:
+         url: "https://archive.apache.org/dist/maven/maven-3/{{ maven_version }}/binaries/apache-maven-{{ maven_version }}-bin.tar.gz"
+         dest: "/tmp/apache-maven-{{ maven_version }}-bin.tar.gz"
+      register: maven_download
+
+    - name: Extract Maven
+      unarchive:
+        src: "/tmp/apache-maven-{{ maven_version }}-bin.tar.gz"
+        dest: "/opt"
+        remote_src: yes
+      when: maven_download.changed
+
+    - name: Update PATH for Maven
+      lineinfile:
+        path: /etc/environment
+        line: 'PATH="/opt/apache-maven-{{ maven_version }}/bin:$PATH"'
+        state: present
+      when: maven_download.changed
+
+    # 3. PostgreSQL Installation and Configuration
+    - name: Install PostgreSQL dependencies
+      apt:
+        name: 
+          - postgresql-client
+          - python3-psycopg2
+        state: present
+
+    - name: Install PostgreSQL
+      apt:
+        name:
+          - "postgresql-{{ pg_version }}"
+          - "postgresql-contrib-{{ pg_version }}"
+        state: present
+        update_cache: yes
+
+    - name: Start and enable PostgreSQL
+      systemd:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: Create PostgreSQL user and database
+      become_user: postgres
+      postgresql_user:
+        name: "{{ vault_pg_user }}"
+        password: "{{ vault_pg_password }}"
+        role_attr_flags: CREATEDB,SUPERUSER
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+
+    - name: Create Ansible temporary directories
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: '0700'
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+      loop:
+        - { path: '/home/hng/.ansible/tmp', owner: 'hng', group: 'hng' }
+        - { path: '/var/lib/postgresql/.ansible/tmp', owner: 'postgres', group: 'postgres' }
+
+    - name: Create PostgreSQL database
+      become_user: postgres
+      postgresql_db:
+        name: "{{ vault_pg_db }}"
+        owner: "{{ vault_pg_user }}"
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+
+    - name: Save PostgreSQL credentials
+      copy:
+        content: "Admin User: {{ vault_pg_user }}\nPassword: {{ vault_pg_password }}"
+        dest: /var/secrets/pg_pw.txt
+        mode: '0600'
+        owner: root
+        group: root
+
+    # 4. RabbitMQ Installation and Configuration
+    - name: Install RabbitMQ
+      apt:
+        name: rabbitmq-server
+        state: latest
+        update_cache: yes
+
+    - name: Enable RabbitMQ management plugin
+      command: rabbitmq-plugins enable rabbitmq_management
+      become: yes
+      register: rabbitmq_management
+      changed_when: "'enabled' in rabbitmq_management.stdout"
+
+    - name: Start and enable RabbitMQ
+      systemd:
+        name: rabbitmq-server
+        state: started
+        enabled: yes
+
+    - name: Debug - RabbitMQ service status
+      debug:
+        var: rabbitmq_service
+
+    - name: Wait for RabbitMQ to be ready
+      wait_for:
+        port: 5672
+        delay: 10
+        timeout: 30
+
+    # - name: Create RabbitMQ user
+    #   community.rabbitmq.rabbitmq_user:
+    #     user: "{{ vault_rabbitmq_user }}"
+    #     password: "{{ vault_rabbitmq_password }}"
+    #     vhost: /
+    #     configure_priv: .*
+    #     read_priv: .*
+    #     write_priv: .*
+    #     state: present
+
+    # 5. Application Deployment and Configuration
+    - name: Clone repository
+      git:
+        repo: "{{ repo_url }}"
+        version: "{{ repo_branch }}"
+        dest: "{{ app_dir }}"
+      become: yes
+      become_user: hng
+
+    - name: Set up application properties
+      template:
+        src: application.properties.j2
+        dest: "{{ app_dir }}/src/main/resources/application.properties"
+      become_user: hng
+
+    - name: Update application.properties
+      template:
+        src: application.properties.j2
+        dest: "{{ app_dir }}/src/main/resources/application.properties"
+      notify: Restart application
+
+    - name: Download Maven
+      get_url:
+        url: "https://archive.apache.org/dist/maven/maven-3/{{ maven_version }}/binaries/apache-maven-{{ maven_version }}-bin.tar.gz"
+        dest: "/tmp/apache-maven-{{ maven_version }}-bin.tar.gz"
+      when: maven_check.rc != 0 or maven_check.rc is not defined
+
+    - name: Extract Maven
+      unarchive:
+        src: "/tmp/apache-maven-{{ maven_version }}-bin.tar.gz"
+        dest: "/opt"
+        remote_src: yes
+      when: maven_check.rc != 0 or maven_check.rc is not defined
+
+    - name: Update PATH for Maven
+      lineinfile:
+        path: /etc/profile.d/maven.sh
+        line: 'export PATH="/opt/apache-maven-{{ maven_version }}/bin:$PATH"'
+        create: yes
+        state: present
+      when: maven_check.rc != 0 or maven_check.rc is not defined
+
+    - name: Source the new PATH
+      shell: source /etc/profile.d/maven.sh
+      args:
+        executable: /bin/bash
+      when: maven_check.rc != 0 or maven_check.rc is not defined
+      
+    - name: Build Java application
+      command: mvn clean package
+      args:
+        chdir: "{{ app_dir }}"
+      become_user: hng
+      become: yes
+      register: build_result
+      changed_when: build_result.stdout is search('BUILD SUCCESS')
+
+    - name: Run tests
+      command: mvn test
+      args:
+        chdir: "{{ app_dir }}"
+      become: yes
+      become_user: hng
+      ignore_errors: yes
+
+    - name: Find the built JAR file
+      find:
+        paths: "{{ app_dir }}/target"
+        patterns: "*.jar"
+      register: jar_file
+
+    - name: Fail if no JAR file found
+      fail:
+        msg: "No JAR file found in {{ app_dir }}/target"
+      when: jar_file.matched == 0
+
+    - name: Set JAR filename
+      set_fact:
+        jar_filename: "{{ jar_file.files[0].path | basename }}"
+
+    - name: Copy JAR file to a fixed location
+      copy:
+        src: "{{ jar_file.files[0].path }}"
+        dest: "{{ app_dir }}/stage_5b.jar"
+        remote_src: yes
+        owner: hng
+        group: hng
+        mode: '0644'
+      when: jar_file.matched > 0
+
+    # 6. Nginx Installation and Configuration
+    - name: Install and configure Nginx
+      block: 
+       - name: Add Nginx official repository
+         apt_repository:
+            repo: ppa:nginx/stable
+            state: present
+
+       - name: Install Nginx 1.26
+         apt:
+            name: nginx={{ nginx_version }}*.
+            state: present
+            update_cache: yes
+
+       - name: Configure Nginx
+         template:
+           src: nginx_springboot.conf.j2
+           dest: /etc/nginx/sites-available/springboot
+         notify: Restart Nginx
+
+       - name: Enable Nginx site
+         file:
+           src: /etc/nginx/sites-available/springboot
+           dest: /etc/nginx/sites-enabled/springboot
+           state: link
+         notify: Restart Nginx
+
+       - name: Remove default Nginx site
+         file:
+           path: /etc/nginx/sites-enabled/default
+           state: absent
+         notify: Restart Nginx
+
+    # 7. Application Service Setup
+    - name: Create systemd service file for the application
+      template:
+        src: app.service.j2
+        dest: /etc/systemd/system/stage_5b.service
+      vars:
+        jar_path: "{{ app_dir }}/stage_5b.jar"
+      notify: Reload systemd
+
+    - name: Display service file content
+      command: cat /etc/systemd/system/stage_5b.service
+      register: service_file_content
+
+    - name: Show service file content
+      debug:
+        var: service_file_content.stdout_lines
+
+    - name: Ensure application service is started and enabled
+      systemd:
+        name: stage_5b
+        state: started
+        enabled: yes
+
+    # 8. Application Verification
+    - name: Wait for application to start
+      wait_for:
+        port: 3000
+        delay: 10
+        timeout: 300
+
+    - name: Verify application is listening on port 3000
+      wait_for:
+        port: 3000
+        timeout: 5
+      register: port_check
+
+    - name: Display port check result
+      debug:
+        var: port_check
+
+    - name: Fail if application is not listening on port 3000
+      fail:
+        msg: "Application is not listening on port 3000"
+      when: port_check.state != "started"
+
+  handlers:
+    - name: Restart Nginx
+      systemd:
+        name: nginx
+        state: restarted
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Restart application
+      systemd:
+        name: stage_5b
+        state: restarted
