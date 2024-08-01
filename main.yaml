@@ -99,24 +99,20 @@
         update_cache: yes
 
     - name: Install specific Maven version
-      get_url:
-         url: "https://archive.apache.org/dist/maven/maven-3/{{ maven_version }}/binaries/apache-maven-{{ maven_version }}-bin.tar.gz"
-         dest: "/tmp/apache-maven-{{ maven_version }}-bin.tar.gz"
-      register: maven_download
+      apt:
+        name: maven
+        state: latest
+        update_cache: yes
+      register: maven_install
 
-    - name: Extract Maven
-      unarchive:
-        src: "/tmp/apache-maven-{{ maven_version }}-bin.tar.gz"
-        dest: "/opt"
-        remote_src: yes
-      when: maven_download.changed
+    - name: Verify Maven installation
+      command: mvn --version
+      register: mvn_version
+      changed_when: false
 
-    - name: Update PATH for Maven
-      lineinfile:
-        path: /etc/environment
-        line: 'PATH="/opt/apache-maven-{{ maven_version }}/bin:$PATH"'
-        state: present
-      when: maven_download.changed
+    - name: Display Maven version
+      debug:
+        var: mvn_version.stdout_lines
 
     # 3. PostgreSQL Installation and Configuration
     - name: Install PostgreSQL dependencies
@@ -235,33 +231,6 @@
         src: application.properties.j2
         dest: "{{ app_dir }}/src/main/resources/application.properties"
       notify: Restart application
-
-    - name: Download Maven
-      get_url:
-        url: "https://archive.apache.org/dist/maven/maven-3/{{ maven_version }}/binaries/apache-maven-{{ maven_version }}-bin.tar.gz"
-        dest: "/tmp/apache-maven-{{ maven_version }}-bin.tar.gz"
-      when: maven_check.rc != 0 or maven_check.rc is not defined
-
-    - name: Extract Maven
-      unarchive:
-        src: "/tmp/apache-maven-{{ maven_version }}-bin.tar.gz"
-        dest: "/opt"
-        remote_src: yes
-      when: maven_check.rc != 0 or maven_check.rc is not defined
-
-    - name: Update PATH for Maven
-      lineinfile:
-        path: /etc/profile.d/maven.sh
-        line: 'export PATH="/opt/apache-maven-{{ maven_version }}/bin:$PATH"'
-        create: yes
-        state: present
-      when: maven_check.rc != 0 or maven_check.rc is not defined
-
-    - name: Source the new PATH
-      shell: source /etc/profile.d/maven.sh
-      args:
-        executable: /bin/bash
-      when: maven_check.rc != 0 or maven_check.rc is not defined
       
     - name: Build Java application
       command: mvn clean package
