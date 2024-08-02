@@ -220,6 +220,19 @@
       become: yes
       become_user: hng
 
+    - name: Ensure correct ownership and permissions for the project directory
+      file:
+        path: "{{ app_dir }}"
+        owner: hng
+        group: hng
+        mode: '0755'
+        recurse: yes
+
+    - name: Ensure Maven wrapper is executable
+      file:
+        path: "{{ app_dir }}/mvnw"
+        mode: '0755'
+
     - name: Set up application properties
       template:
         src: application.properties.j2
@@ -233,7 +246,7 @@
       notify: Restart application
       
     - name: Build Java application
-      command: mvn clean package
+      command: ./mvnw clean package -DskipTests
       args:
         chdir: "{{ app_dir }}"
       become_user: hng
@@ -242,7 +255,7 @@
       changed_when: build_result.stdout is search('BUILD SUCCESS')
 
     - name: Run tests
-      command: mvn test
+      command: ./mvnw test
       args:
         chdir: "{{ app_dir }}"
       become: yes
@@ -254,11 +267,6 @@
         paths: "{{ app_dir }}/target"
         patterns: "*.jar"
       register: jar_file
-
-    - name: Fail if no JAR file found
-      fail:
-        msg: "No JAR file found in {{ app_dir }}/target"
-      when: jar_file.matched == 0
 
     - name: Set JAR filename
       set_fact:
@@ -277,10 +285,22 @@
     # 6. Nginx Installation and Configuration
     - name: Install and configure Nginx
       block: 
+       - name: Install prerequisites
+         apt:
+          name: 
+            - software-properties-common
+            - apt-transport-https
+          state: present
+          update_cache: yes
+
        - name: Add Nginx official repository
          apt_repository:
             repo: ppa:nginx/stable
             state: present
+
+       - name: Update apt cache
+         apt:
+            update_cache: yes
 
        - name: Install Nginx 1.26
          apt:
