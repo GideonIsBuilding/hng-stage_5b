@@ -11,7 +11,7 @@
     pg_version: 14
     java_version: "17"
     maven_version: "3.9.8"
-    nginx_version: "1.26.0" 
+    # nginx_version: "1.26.0" 
     pg_user: admin_user
     pg_password: admin_password
     pg_db: boilerplate_db
@@ -303,21 +303,22 @@
           state: present
           update_cache: yes
 
-       - name: Add Nginx official repository
-         apt_repository:
-            repo: ppa:nginx/stable
-            state: present
-
        - name: Update apt cache
          apt:
-            update_cache: yes
+           update_cache: yes
+           cache_valid_time: 3600  # Update the cache if it's older than 1 hour
 
-       - name: Install Nginx 1.26
+       - name: Install Nginx
          apt:
-            name: nginx={{ nginx_version }}*.
-            state: present
-            update_cache: yes
+           name: nginx
+           state: present
 
+       - name: Start Nginx service
+         systemd:
+           name: nginx
+           state: started
+           enabled: yes
+            
        - name: Configure Nginx
          template:
            src: nginx_springboot.conf.j2
