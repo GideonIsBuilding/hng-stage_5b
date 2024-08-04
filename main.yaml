@@ -2,8 +2,8 @@
 - name: Deploy and Configure Java Boilerplate Application
   hosts: hng
   become: yes
-  vars_files:
-    - vault.yml
+  # vars_files:
+  #   - vault.yml
   vars:
     repo_url: "https://github.com/hngprojects/hng_boilerplate_java_web.git"
     repo_branch: "devops"
@@ -12,6 +12,16 @@
     java_version: "17"
     maven_version: "3.9.8"
     nginx_version: "1.26.0" 
+    pg_user: admin_user
+    pg_password: admin_password
+    pg_db: boilerplate_db
+    rabbitmq_queue_email: galosikhena@gmail.com
+    rabbitmq_host: localhost
+    rabbitmq_port: 5672
+    rabbitmq_user: rabbitmq_user
+    rabbitmq_password: rabbitmq_password
+    app_secret_key: 123qweasdzxc
+    sha512_string: 10b4a3b636b13204489edf6c383ed2b59f5f4b9ac38969337790f0e8ef2e0c5c70cbeacc5f49f17868eeae8ca35a736fc9c6b22d4be376973d0b3a8f1e18a98b
 
   pre_tasks:
     - name: Ensure Ansible temo directory exists
@@ -139,8 +149,8 @@
     - name: Create PostgreSQL user and database
       become_user: postgres
       postgresql_user:
-        name: "{{ vault_pg_user }}"
-        password: "{{ vault_pg_password }}"
+        name: "{{ pg_user }}"
+        password: "{{ pg_password }}"
         role_attr_flags: CREATEDB,SUPERUSER
       vars:
         ansible_python_interpreter: /usr/bin/python3
@@ -159,14 +169,14 @@
     - name: Create PostgreSQL database
       become_user: postgres
       postgresql_db:
-        name: "{{ vault_pg_db }}"
-        owner: "{{ vault_pg_user }}"
+        name: "{{ pg_db }}"
+        owner: "{{ pg_user }}"
       vars:
         ansible_python_interpreter: /usr/bin/python3
 
     - name: Save PostgreSQL credentials
       copy:
-        content: "Admin User: {{ vault_pg_user }}\nPassword: {{ vault_pg_password }}"
+        content: "Admin User: {{ pg_user }}\nPassword: {{ pg_password }}"
         dest: /var/secrets/pg_pw.txt
         mode: '0600'
         owner: root
@@ -203,8 +213,8 @@
 
     # - name: Create RabbitMQ user
     #   community.rabbitmq.rabbitmq_user:
-    #     user: "{{ vault_rabbitmq_user }}"
-    #     password: "{{ vault_rabbitmq_password }}"
+    #     user: "{{ rabbitmq_user }}"
+    #     password: "{{ rabbitmq_password }}"
     #     vhost: /
     #     configure_priv: .*
     #     read_priv: .*
